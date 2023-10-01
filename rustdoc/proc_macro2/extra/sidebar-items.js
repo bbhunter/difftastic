@@ -1,0 +1,1 @@
+initSidebarItems({"struct":[["DelimSpan","An object that holds a `Group`’s `span_open()` and `span_close()` together (in a more compact representation than holding those 2 spans individually."]]});

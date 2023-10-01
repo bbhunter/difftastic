@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["version",""]],"struct":[["CommitInfo",""],["VERSION",""],["VersionInfo",""]]});

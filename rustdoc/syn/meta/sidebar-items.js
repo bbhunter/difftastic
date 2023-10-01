@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["parser","Make a parser that is usable with `parse_macro_input!` in a `#[proc_macro_attribute]` macro."]],"struct":[["ParseNestedMeta","Context for parsing a single property in the conventional syntax for structured attributes."]]});

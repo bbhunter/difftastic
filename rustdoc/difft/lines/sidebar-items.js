@@ -1,0 +1,1 @@
+initSidebarItems({"fn":[["byte_len","Return the length of `s` in bytes."],["codepoint_len","Return the length of `s` in codepoints. This is important when finding character boundaries for slicing without errors."],["format_line_num",""],["is_all_whitespace",""]],"struct":[["LinePosition","A position in a single line of a string."]],"trait":[["MaxLine",""]]});
