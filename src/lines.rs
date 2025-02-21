@@ -4,33 +4,19 @@ use std::ops::Sub;
 
 use line_numbers::LineNumber;
 
-pub fn format_line_num(line_num: LineNumber) -> String {
+pub(crate) fn format_line_num(line_num: LineNumber) -> String {
     format!("{} ", line_num.display())
-}
-
-/// A position in a single line of a string.
-#[derive(Debug, PartialEq, Clone, Copy)]
-struct LinePosition {
-    /// Both zero-indexed.
-    pub line: LineNumber,
-    column: usize,
-}
-
-/// Return the length of `s` in codepoints. This is important when
-/// finding character boundaries for slicing without errors.
-pub fn codepoint_len(s: &str) -> usize {
-    s.chars().count()
 }
 
 /// Return the length of `s` in bytes.
 ///
 /// This is a trivial wrapper to make it clear when we want bytes not
 /// codepoints.
-pub fn byte_len(s: &str) -> usize {
+pub(crate) fn byte_len(s: &str) -> usize {
     s.len()
 }
 
-pub trait MaxLine {
+pub(crate) trait MaxLine {
     fn max_line(&self) -> LineNumber;
 }
 
@@ -46,7 +32,22 @@ impl<S: AsRef<str>> MaxLine for S {
     }
 }
 
-pub fn is_all_whitespace(s: &str) -> bool {
+/// Split `s` on \n or \r\n. Always returns a non-empty vec. Each line
+/// in the vec does not include the trailing newline.
+///
+/// This differs from `str::lines`, which considers `""` to be zero
+/// lines and `"foo\n"` to be one line.
+pub(crate) fn split_on_newlines(s: &str) -> impl Iterator<Item = &str> {
+    s.split('\n').map(|l| {
+        if let Some(l) = l.strip_suffix('\r') {
+            l
+        } else {
+            l
+        }
+    })
+}
+
+pub(crate) fn is_all_whitespace(s: &str) -> bool {
     s.chars().all(|c| c.is_whitespace())
 }
 
@@ -81,12 +82,41 @@ mod tests {
     }
 
     #[test]
-    fn codepoint_len_non_ascii() {
-        assert_eq!(codepoint_len("ƒoo"), 3);
+    fn test_split_line_empty() {
+        assert_eq!(split_on_newlines("").collect::<Vec<_>>(), vec![""]);
     }
 
     #[test]
-    fn test_is_all_whiteapce() {
+    fn test_split_line_single() {
+        assert_eq!(split_on_newlines("foo").collect::<Vec<_>>(), vec!["foo"]);
+    }
+
+    #[test]
+    fn test_split_line_with_newline() {
+        assert_eq!(
+            split_on_newlines("foo\nbar").collect::<Vec<_>>(),
+            vec!["foo", "bar"]
+        );
+    }
+
+    #[test]
+    fn test_split_line_with_crlf() {
+        assert_eq!(
+            split_on_newlines("foo\r\nbar").collect::<Vec<_>>(),
+            vec!["foo", "bar"]
+        );
+    }
+
+    #[test]
+    fn test_split_line_with_trailing_newline() {
+        assert_eq!(
+            split_on_newlines("foo\nbar\n").collect::<Vec<_>>(),
+            vec!["foo", "bar", ""]
+        );
+    }
+
+    #[test]
+    fn test_is_all_whitespace() {
         assert!(is_all_whitespace(" \n\t"));
     }
 }

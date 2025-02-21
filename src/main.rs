@@ -15,13 +15,20 @@
 // Has false positives on else if chains that sometimes have the same
 // body for readability.
 #![allow(clippy::if_same_then_else)]
-// Purely stylistic, and ignores whether there are explanatory
-// comments in the if/else.
-#![allow(clippy::bool_to_int_with_if)]
 // Good practice in general, but a necessary evil for Syntax. Its Hash
 // implementation does not consider the mutable fields, so it is still
 // correct.
 #![allow(clippy::mutable_key_type)]
+// It's sometimes more readable to explicitly create a vec than to use
+// the Default trait.
+#![allow(clippy::manual_unwrap_or_default)]
+// .to_owned() is more explicit on string references.
+#![warn(clippy::str_to_string)]
+// .to_string() on a String is clearer as .clone().
+#![warn(clippy::string_to_string)]
+// Debugging features shouldn't be in checked-in code.
+#![warn(clippy::todo)]
+#![warn(clippy::dbg_macro)]
 
 mod conflicts;
 mod constants;
@@ -36,12 +43,16 @@ mod options;
 mod parse;
 mod summary;
 mod version;
+mod words;
 
 #[macro_use]
 extern crate log;
 
+use display::style::print_warning;
 use log::info;
 use mimalloc::MiMalloc;
+use options::FilePermissions;
+use options::USAGE;
 
 use crate::conflicts::apply_conflict_markers;
 use crate::conflicts::START_LHS_MARKER;
@@ -67,9 +78,8 @@ use crate::parse::syntax;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::{env, path::Path};
+use std::path::Path;
+use std::{env, thread};
 
 use humansize::{format_size, BINARY};
 use owo_colors::OwoColorize;
@@ -104,7 +114,7 @@ fn reset_sigpipe() {
 /// The entrypoint.
 fn main() {
     pretty_env_logger::try_init_timed_custom_env("DFT_LOG")
-        .expect("The logger has not been previously initalized");
+        .expect("The logger has not been previously initialized");
     reset_sigpipe();
 
     match options::parse_args() {
@@ -151,6 +161,29 @@ fn main() {
                 }
             }
         }
+        Mode::DumpSyntaxDot {
+            path,
+            ignore_comments,
+            language_overrides,
+        } => {
+            let path = Path::new(&path);
+            let bytes = read_or_die(path);
+            let src = String::from_utf8_lossy(&bytes).to_string();
+
+            let language = guess(path, &src, &language_overrides);
+            match language {
+                Some(lang) => {
+                    let ts_lang = tsp::from_language(lang);
+                    let arena = Arena::new();
+                    let ast = tsp::parse(&arena, &src, &ts_lang, ignore_comments);
+                    init_all_info(&ast, &[]);
+                    syntax::print_as_dot(&ast);
+                }
+                None => {
+                    eprintln!("No tree-sitter parser for file: {:?}", path);
+                }
+            }
+        }
         Mode::ListLanguages {
             use_color,
             language_overrides,
@@ -160,7 +193,7 @@ fn main() {
                     LanguageOverride::Language(lang) => language_name(lang),
                     LanguageOverride::PlainText => "Text",
                 }
-                .to_string();
+                .to_owned();
                 if use_color {
                     name = name.bold().to_string();
                 }
@@ -172,7 +205,7 @@ fn main() {
             }
 
             for language in Language::iter() {
-                let mut name = language_name(language).to_string();
+                let mut name = language_name(language).to_owned();
                 if use_color {
                     name = name.bold().to_string();
                 }
@@ -216,8 +249,10 @@ fn main() {
             language_overrides,
             lhs_path,
             rhs_path,
+            lhs_permissions,
+            rhs_permissions,
             display_path,
-            old_path,
+            renamed,
         } => {
             if lhs_path == rhs_path {
                 let is_dir = match &lhs_path {
@@ -225,19 +260,22 @@ fn main() {
                     _ => false,
                 };
 
-                eprintln!(
-                    "warning: You've specified the same {} twice.\n",
-                    if is_dir { "directory" } else { "file" }
+                print_warning(
+                    &format!(
+                        "You've specified the same {} twice.",
+                        if is_dir { "directory" } else { "file" }
+                    ),
+                    &display_options,
                 );
             }
 
-            let encountered_changes = Arc::new(AtomicBool::new(false));
+            let mut encountered_changes = false;
             match (&lhs_path, &rhs_path) {
                 (
                     options::FileArgument::NamedPath(lhs_path),
                     options::FileArgument::NamedPath(rhs_path),
                 ) if lhs_path.is_dir() && rhs_path.is_dir() => {
-                    let encountered_changes = encountered_changes.clone();
+                    // Diffs in parallel when iterating this iterator.
                     let diff_iter = diff_directories(
                         lhs_path,
                         rhs_path,
@@ -247,59 +285,60 @@ fn main() {
                     );
 
                     if matches!(display_options.display_mode, DisplayMode::Json) {
-                        let results = diff_iter
-                            .map(|diff_result| {
-                                if diff_result.has_reportable_change() {
-                                    encountered_changes.store(true, Ordering::Relaxed);
-                                }
+                        let results: Vec<_> = diff_iter.collect();
+                        encountered_changes = results
+                            .iter()
+                            .any(|diff_result| diff_result.has_reportable_change());
+                        display::json::print_directory(results, display_options.print_unchanged);
+                    } else if display_options.sort_paths {
+                        let mut result: Vec<DiffResult> = diff_iter.collect();
+                        result.sort_unstable_by(|a, b| a.display_path.cmp(&b.display_path));
+                        for diff_result in result {
+                            print_diff_result(&display_options, &diff_result);
 
-                                diff_result
-                            })
-                            .collect();
-
-                        display::json::print_directory(results);
+                            if diff_result.has_reportable_change() {
+                                encountered_changes = true;
+                            }
+                        }
                     } else {
                         // We want to diff files in the directory in
-                        // parallel, but print the results serially (to
-                        // prevent display interleaving).
+                        // parallel, but print the results serially
+                        // (to prevent display interleaving).
                         // https://github.com/rayon-rs/rayon/issues/210#issuecomment-551319338
-                        let (send, recv) = std::sync::mpsc::sync_channel(1);
+                        thread::scope(|s| {
+                            let (send, recv) = std::sync::mpsc::sync_channel(1);
 
-                        let encountered_changes = encountered_changes.clone();
-                        let print_options = display_options.clone();
+                            s.spawn(move || {
+                                diff_iter
+                                    .try_for_each_with(send, |s, diff_result| s.send(diff_result))
+                                    .expect("Receiver should be connected")
+                            });
 
-                        let printing_thread = std::thread::spawn(move || {
                             for diff_result in recv.into_iter() {
-                                print_diff_result(&print_options, &diff_result);
+                                print_diff_result(&display_options, &diff_result);
 
                                 if diff_result.has_reportable_change() {
-                                    encountered_changes.store(true, Ordering::Relaxed);
+                                    encountered_changes = true;
                                 }
                             }
                         });
-
-                        diff_iter
-                            .try_for_each_with(send, |s, diff_result| s.send(diff_result))
-                            .expect("Receiver should be connected");
-
-                        printing_thread
-                            .join()
-                            .expect("Printing thread should not panic");
                     }
                 }
                 _ => {
                     let diff_result = diff_file(
                         &display_path,
-                        old_path,
+                        renamed,
                         &lhs_path,
                         &rhs_path,
+                        lhs_permissions.as_ref(),
+                        rhs_permissions.as_ref(),
                         &display_options,
                         &diff_options,
                         false,
                         &language_overrides,
                     );
                     if diff_result.has_reportable_change() {
-                        encountered_changes.store(true, Ordering::Relaxed);
+                        encountered_changes = true;
                     }
 
                     match display_options.display_mode {
@@ -313,7 +352,7 @@ fn main() {
                 }
             }
 
-            let exit_code = if set_exit_code && encountered_changes.load(Ordering::Relaxed) {
+            let exit_code = if set_exit_code && encountered_changes {
                 EXIT_FOUND_CHANGES
             } else {
                 EXIT_SUCCESS
@@ -326,19 +365,21 @@ fn main() {
 /// Print a diff between two files.
 fn diff_file(
     display_path: &str,
-    extra_info: Option<String>,
+    renamed: Option<String>,
     lhs_path: &FileArgument,
     rhs_path: &FileArgument,
+    lhs_permissions: Option<&FilePermissions>,
+    rhs_permissions: Option<&FilePermissions>,
     display_options: &DisplayOptions,
     diff_options: &DiffOptions,
     missing_as_empty: bool,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
 ) -> DiffResult {
     let (lhs_bytes, rhs_bytes) = read_files_or_die(lhs_path, rhs_path, missing_as_empty);
-    let (lhs_src, rhs_src) = match (guess_content(&lhs_bytes), guess_content(&rhs_bytes)) {
+    let (mut lhs_src, mut rhs_src) = match (guess_content(&lhs_bytes), guess_content(&rhs_bytes)) {
         (ProbableFileKind::Binary, _) | (_, ProbableFileKind::Binary) => {
             return DiffResult {
-                extra_info,
+                extra_info: renamed,
                 display_path: display_path.to_owned(),
                 file_format: FileFormat::Binary,
                 lhs_src: FileContent::Binary,
@@ -352,6 +393,45 @@ fn diff_file(
         }
         (ProbableFileKind::Text(lhs_src), ProbableFileKind::Text(rhs_src)) => (lhs_src, rhs_src),
     };
+
+    if diff_options.strip_cr {
+        lhs_src.retain(|c| c != '\r');
+        rhs_src.retain(|c| c != '\r');
+    }
+
+    // Ensure that lhs_src and rhs_src both have trailing
+    // newlines.
+    //
+    // This is important when textually diffing files that don't have
+    // a trailing newline, e.g. "foo\n\bar\n" versus "foo". We want to
+    // consider `foo` to be unchanged in this case.
+    //
+    // Theoretically a tree-sitter parser could change its AST due to
+    // the additional trailing newline, but it seems vanishingly
+    // unlikely.
+    if !lhs_src.is_empty() && !lhs_src.ends_with('\n') {
+        lhs_src.push('\n');
+    }
+    if !rhs_src.is_empty() && !rhs_src.ends_with('\n') {
+        rhs_src.push('\n');
+    }
+
+    let mut extra_info = renamed;
+    if let (Some(lhs_perms), Some(rhs_perms)) = (lhs_permissions, rhs_permissions) {
+        if lhs_perms != rhs_perms {
+            let msg = format!(
+                "File permissions changed from {} to {}.",
+                lhs_perms, rhs_perms
+            );
+
+            if let Some(extra_info) = &mut extra_info {
+                extra_info.push('\n');
+                extra_info.push_str(&msg);
+            } else {
+                extra_info = Some(msg);
+            }
+        }
+    }
 
     diff_file_content(
         display_path,
@@ -374,13 +454,17 @@ fn diff_conflicts_file(
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
 ) -> DiffResult {
     let bytes = read_file_or_die(path);
-    let src = match guess_content(&bytes) {
+    let mut src = match guess_content(&bytes) {
         ProbableFileKind::Text(src) => src,
         ProbableFileKind::Binary => {
             eprintln!("error: Expected a text file with conflict markers, got a binary file.");
             std::process::exit(EXIT_BAD_ARGUMENTS);
         }
     };
+
+    if diff_options.strip_cr {
+        src.retain(|c| c != '\r');
+    }
 
     let conflict_files = match apply_conflict_markers(&src) {
         Ok(cf) => cf,
@@ -392,9 +476,13 @@ fn diff_conflicts_file(
 
     if conflict_files.num_conflicts == 0 {
         eprintln!(
-            "warning: Expected a file with conflict markers {}, but none were found. See --help for usage instructions.\n",
+            "error: Difftastic requires two paths, or a single file with conflict markers {}.\n",
             START_LHS_MARKER,
         );
+
+        eprintln!("USAGE:\n\n    {}\n", USAGE);
+        eprintln!("For more information try --help");
+        std::process::exit(EXIT_BAD_ARGUMENTS);
     }
 
     let lhs_name = match conflict_files.lhs_name {
@@ -434,7 +522,7 @@ fn check_only_text(
     let has_changes = lhs_src != rhs_src;
 
     DiffResult {
-        display_path: display_path.to_string(),
+        display_path: display_path.to_owned(),
         extra_info,
         file_format: file_format.clone(),
         lhs_src: FileContent::Text(lhs_src.into()),
@@ -458,14 +546,13 @@ fn diff_file_content(
     diff_options: &DiffOptions,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
 ) -> DiffResult {
-    let (guess_src, guess_path) = match rhs_path {
-        FileArgument::NamedPath(path) => (&rhs_src, Path::new(path)),
-        FileArgument::Stdin => (&rhs_src, Path::new(&display_path)),
-        FileArgument::DevNull => (&lhs_src, Path::new(&display_path)),
+    let guess_src = match rhs_path {
+        FileArgument::DevNull => &lhs_src,
+        _ => &rhs_src,
     };
 
-    let language = guess(guess_path, guess_src, overrides);
-    let lang_config = language.map(|lang| (lang.clone(), tsp::from_language(lang)));
+    let language = guess(Path::new(display_path), guess_src, overrides);
+    let lang_config = language.map(|lang| (lang, tsp::from_language(lang)));
 
     if lhs_src == rhs_src {
         let file_format = match language {
@@ -473,11 +560,11 @@ fn diff_file_content(
             None => FileFormat::PlainText,
         };
 
-        // If the two files are completely identical, return early
+        // If the two files are byte-for-byte identical, return early
         // rather than doing any more work.
         return DiffResult {
             extra_info,
-            display_path: display_path.to_string(),
+            display_path: display_path.to_owned(),
             file_format,
             lhs_src: FileContent::Text("".into()),
             rhs_src: FileContent::Text("".into()),
@@ -518,7 +605,7 @@ fn diff_file_content(
                                 let has_syntactic_changes = lhs != rhs;
                                 return DiffResult {
                                     extra_info,
-                                    display_path: display_path.to_string(),
+                                    display_path: display_path.to_owned(),
                                     file_format: FileFormat::SupportedLanguage(language),
                                     lhs_src: FileContent::Text(lhs_src.to_owned()),
                                     rhs_src: FileContent::Text(rhs_src.to_owned()),
@@ -544,8 +631,8 @@ fn diff_file_content(
                                 init_next_prev(&rhs_section_nodes);
 
                                 match mark_syntax(
-                                    lhs_section_nodes.get(0).copied(),
-                                    rhs_section_nodes.get(0).copied(),
+                                    lhs_section_nodes.first().copied(),
+                                    rhs_section_nodes.first().copied(),
                                     &mut change_map,
                                     diff_options.graph_limit,
                                 ) {
@@ -659,7 +746,7 @@ fn diff_file_content(
 
     DiffResult {
         extra_info,
-        display_path: display_path.to_string(),
+        display_path: display_path.to_owned(),
         file_format,
         lhs_src: FileContent::Text(lhs_src.to_owned()),
         rhs_src: FileContent::Text(rhs_src.to_owned()),
@@ -676,7 +763,7 @@ fn diff_file_content(
 /// incrementally.
 ///
 /// When more than one file is modified, the hg extdiff extension passes directory
-/// paths with the all the modified files.
+/// paths with all the modified files.
 fn diff_directories<'a>(
     lhs_dir: &'a Path,
     rhs_dir: &'a Path,
@@ -696,14 +783,16 @@ fn diff_directories<'a>(
     paths.into_par_iter().map(move |rel_path| {
         info!("Relative path is {:?} inside {:?}", rel_path, lhs_dir);
 
-        let lhs_path = Path::new(lhs_dir).join(&rel_path);
-        let rhs_path = Path::new(rhs_dir).join(&rel_path);
+        let lhs_path = FileArgument::NamedPath(Path::new(lhs_dir).join(&rel_path));
+        let rhs_path = FileArgument::NamedPath(Path::new(rhs_dir).join(&rel_path));
 
         diff_file(
             &rel_path.display().to_string(),
             None,
-            &FileArgument::NamedPath(lhs_path),
-            &FileArgument::NamedPath(rhs_path),
+            &lhs_path,
+            &rhs_path,
+            lhs_path.permissions().as_ref(),
+            rhs_path.permissions().as_ref(),
             &display_options,
             &diff_options,
             true,
@@ -813,9 +902,9 @@ fn print_diff_result(display_options: &DisplayOptions, summary: &DiffResult) {
                     )
                 );
                 if summary.has_byte_changes {
-                    println!("Binary contents changed.");
+                    println!("Binary contents changed.\n");
                 } else {
-                    println!("No changes.");
+                    println!("No changes.\n");
                 }
             }
         }
@@ -833,7 +922,7 @@ fn print_diff_result(display_options: &DisplayOptions, summary: &DiffResult) {
                     display_options
                 )
             );
-            println!("Binary contents changed.");
+            println!("Binary contents changed.\n");
         }
     }
 }

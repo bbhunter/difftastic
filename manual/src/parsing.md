@@ -1,4 +1,4 @@
-# Parsing
+# Internals: Parsing
 
 Difftastic uses
 [tree-sitter](https://tree-sitter.github.io/tree-sitter/) to build a
@@ -12,7 +12,7 @@ the parse tree that tree-sitter produces using the `--dump-ts`
 flag.
 
 ```
-$ difft --dump-ts sample_files/javascript_simple_before.js | head
+$ difft --dump-ts sample_files/javascript_simple_1.js | head
 program (0, 0) - (7, 0)
   comment (0, 0) - (0, 8) "// hello"
   expression_statement (1, 0) - (1, 6)
@@ -82,7 +82,7 @@ program (0, 0) - (1, 0)
 
 `tree_sitter_parser.rs` uses `open_delimiter_tokens` to ensure that
 `[` and `]` are used as delimiter content in the enclosing list,
-rather than converitng them to atoms.
+rather than converting them to atoms.
 
 Difftastic can match up atoms that occur in different parts of the
 simplified syntax tree. If e.g. a `[` is treated as an atom,
@@ -94,4 +94,4 @@ close delimiters.
 
 The simplified syntax tree only stores node content and node
 position. It does not store whitespace between nodes, and position is
-largely ignored during diffing.
+ignored during diffing.

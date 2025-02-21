@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use line_numbers::LineNumber;
 use serde::{ser::SerializeStruct, Serialize, Serializer};
@@ -14,7 +14,7 @@ use crate::{
     summary::{DiffResult, FileContent, FileFormat},
 };
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 enum Status {
     Unchanged,
@@ -112,7 +112,7 @@ impl<'f> From<&'f DiffResult> for File<'f> {
 
                 let mut chunks = Vec::with_capacity(hunks.len());
                 for hunk in &hunks {
-                    let mut lines = HashMap::with_capacity(hunk.lines.len());
+                    let mut lines = BTreeMap::new();
 
                     let (start_i, end_i) = matched_lines_indexes_for_hunk(matched_lines, hunk, 0);
                     let aligned_lines = &matched_lines[start_i..end_i];
@@ -255,7 +255,7 @@ impl Highlight {
             MatchKind::UnchangedToken { highlight, .. } => highlight,
             MatchKind::Novel { highlight, .. } => highlight,
             MatchKind::NovelWord { highlight, .. } => highlight,
-            MatchKind::NovelLinePart { highlight, .. } => highlight,
+            MatchKind::UnchangedPartOfNovelItem { highlight, .. } => highlight,
         };
 
         match highlight {
@@ -273,15 +273,19 @@ impl Highlight {
     }
 }
 
-pub fn print_directory(diffs: Vec<DiffResult>) {
-    let files = diffs.iter().map(File::from).collect::<Vec<File>>();
+pub(crate) fn print_directory(diffs: Vec<DiffResult>, print_unchanged: bool) {
+    let files = diffs
+        .iter()
+        .map(File::from)
+        .filter(|f| print_unchanged || f.status != Status::Unchanged)
+        .collect::<Vec<File>>();
     println!(
         "{}",
         serde_json::to_string(&files).expect("failed to serialize files")
     );
 }
 
-pub fn print(diff: &DiffResult) {
+pub(crate) fn print(diff: &DiffResult) {
     let file = File::from(diff);
     println!(
         "{}",

@@ -5,38 +5,38 @@
 /// If we exceed this, the lines are stored in separate hunks.
 const MAX_DISTANCE: u32 = 4;
 
-use std::collections::HashSet;
-
 use line_numbers::LineNumber;
 
 use crate::{
     constants::Side,
-    display::context::{add_context, opposite_positions},
-    display::side_by_side::lines_with_novel,
-    hash::DftHashMap,
+    display::{
+        context::{add_context, opposite_positions},
+        side_by_side::lines_with_novel,
+    },
+    hash::{DftHashMap, DftHashSet},
     parse::syntax::{zip_pad_shorter, MatchKind, MatchedPos},
 };
 
 /// A hunk represents a series of modified lines that are displayed
 /// together.
 #[derive(Debug, Clone)]
-pub struct Hunk {
+pub(crate) struct Hunk {
     /// The LHS line numbers that contain novel content.
-    pub novel_lhs: HashSet<LineNumber>,
+    pub(crate) novel_lhs: DftHashSet<LineNumber>,
     /// The RHS line numbers that contain novel content.
-    pub novel_rhs: HashSet<LineNumber>,
+    pub(crate) novel_rhs: DftHashSet<LineNumber>,
     /// Line pairs that contain modified lines. This does not include
     /// padding, so at least one of the two lines has novel content.
-    pub lines: Vec<(Option<LineNumber>, Option<LineNumber>)>,
+    pub(crate) lines: Vec<(Option<LineNumber>, Option<LineNumber>)>,
 }
 
 impl Hunk {
-    pub fn merge(self, other: &Self) -> Self {
+    pub(crate) fn merge(self, other: &Self) -> Self {
         let mut lines = self.lines;
         lines.extend(other.lines.iter());
 
-        let mut lhs_seen: HashSet<LineNumber> = HashSet::new();
-        let mut rhs_seen: HashSet<LineNumber> = HashSet::new();
+        let mut lhs_seen: DftHashSet<LineNumber> = DftHashSet::default();
+        let mut rhs_seen: DftHashSet<LineNumber> = DftHashSet::default();
 
         let mut deduped_lines = vec![];
         for (lhs_line, rhs_line) in lines {
@@ -130,23 +130,23 @@ fn extract_lines(hunk: &Hunk) -> Vec<(Option<LineNumber>, Option<LineNumber>)> {
     relevant
 }
 
-pub fn merge_adjacent(
+pub(crate) fn merge_adjacent(
     hunks: &[Hunk],
-    opposite_to_lhs: &DftHashMap<LineNumber, HashSet<LineNumber>>,
-    opposite_to_rhs: &DftHashMap<LineNumber, HashSet<LineNumber>>,
+    opposite_to_lhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
+    opposite_to_rhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
     max_lhs_src_line: LineNumber,
     max_rhs_src_line: LineNumber,
     num_context_lines: usize,
 ) -> Vec<Hunk> {
-    let mut res: Vec<Hunk> = vec![];
+    let mut merged_hunks: Vec<Hunk> = vec![];
     let mut prev_hunk: Option<Hunk> = None;
 
-    let mut prev_lhs_lines: HashSet<LineNumber> = HashSet::new();
-    let mut prev_rhs_lines: HashSet<LineNumber> = HashSet::new();
+    let mut prev_lhs_lines: DftHashSet<LineNumber> = DftHashSet::default();
+    let mut prev_rhs_lines: DftHashSet<LineNumber> = DftHashSet::default();
 
     for hunk in hunks {
-        let mut lhs_lines: HashSet<LineNumber> = HashSet::new();
-        let mut rhs_lines: HashSet<LineNumber> = HashSet::new();
+        let mut lhs_lines: DftHashSet<LineNumber> = DftHashSet::default();
+        let mut rhs_lines: DftHashSet<LineNumber> = DftHashSet::default();
 
         let lines = extract_lines(hunk);
         let contextual_lines = add_context(
@@ -171,7 +171,7 @@ pub fn merge_adjacent(
                 if lhs_lines.is_disjoint(&prev_lhs_lines) && rhs_lines.is_disjoint(&prev_rhs_lines)
                 {
                     // No overlaps, start a new hunk.
-                    res.push(hunk_so_far.clone());
+                    merged_hunks.push(hunk_so_far.clone());
                     prev_hunk = Some(hunk.clone());
 
                     prev_lhs_lines = lhs_lines;
@@ -193,10 +193,10 @@ pub fn merge_adjacent(
     }
 
     if let Some(current_hunk) = prev_hunk {
-        res.push(current_hunk);
+        merged_hunks.push(current_hunk);
     }
 
-    res
+    merged_hunks
 }
 
 fn lines_are_close(
@@ -227,7 +227,7 @@ fn lines_are_close(
 fn enforce_increasing(
     lines: &[(Option<LineNumber>, Option<LineNumber>)],
 ) -> Vec<(Option<LineNumber>, Option<LineNumber>)> {
-    let mut res = vec![];
+    let mut ordered_lines = vec![];
 
     let mut max_lhs_line: Option<LineNumber> = None;
     let mut max_rhs_line: Option<LineNumber> = None;
@@ -264,20 +264,20 @@ fn enforce_increasing(
         }
 
         if lhs_line.is_some() || rhs_line.is_some() {
-            res.push((lhs_line, rhs_line));
+            ordered_lines.push((lhs_line, rhs_line));
         }
     }
 
-    res
+    ordered_lines
 }
 
 fn find_novel_lines(
     lines: &[(Option<LineNumber>, Option<LineNumber>)],
-    all_lhs_novel: &HashSet<LineNumber>,
-    all_rhs_novel: &HashSet<LineNumber>,
-) -> (HashSet<LineNumber>, HashSet<LineNumber>) {
-    let mut lhs_novel = HashSet::new();
-    let mut rhs_novel = HashSet::new();
+    all_lhs_novel: &DftHashSet<LineNumber>,
+    all_rhs_novel: &DftHashSet<LineNumber>,
+) -> (DftHashSet<LineNumber>, DftHashSet<LineNumber>) {
+    let mut lhs_novel = DftHashSet::default();
+    let mut rhs_novel = DftHashSet::default();
 
     for (lhs_line, rhs_line) in lines {
         if let Some(lhs_line) = lhs_line {
@@ -364,8 +364,8 @@ fn novel_section_in_order(
     rhs_novel_mps: &[&MatchedPos],
     lhs_prev_matched_line: Option<LineNumber>,
     rhs_prev_matched_line: Option<LineNumber>,
-    opposite_to_lhs: &DftHashMap<LineNumber, HashSet<LineNumber>>,
-    opposite_to_rhs: &DftHashMap<LineNumber, HashSet<LineNumber>>,
+    opposite_to_lhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
+    opposite_to_rhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
 ) -> Vec<(Side, MatchedPos)> {
     let mut res: Vec<(Side, MatchedPos)> = vec![];
 
@@ -439,8 +439,8 @@ fn novel_section_in_order(
 fn sorted_novel_positions(
     lhs_mps: &[MatchedPos],
     rhs_mps: &[MatchedPos],
-    opposite_to_lhs: &DftHashMap<LineNumber, HashSet<LineNumber>>,
-    opposite_to_rhs: &DftHashMap<LineNumber, HashSet<LineNumber>>,
+    opposite_to_lhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
+    opposite_to_rhs: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
 ) -> Vec<(Side, MatchedPos)> {
     let mut lhs_mps: Vec<MatchedPos> = lhs_mps.to_vec();
     lhs_mps.sort_unstable_by_key(|mp| mp.pos);
@@ -533,7 +533,7 @@ fn sorted_novel_positions(
 
 fn next_opposite(
     line: LineNumber,
-    opposites: &DftHashMap<LineNumber, HashSet<LineNumber>>,
+    opposites: &DftHashMap<LineNumber, DftHashSet<LineNumber>>,
     prev_opposite: Option<LineNumber>,
 ) -> Option<LineNumber> {
     opposites.get(&line).and_then(|lines_set| {
@@ -599,7 +599,7 @@ fn matched_novel_lines(
     lines
 }
 
-pub fn matched_pos_to_hunks(lhs_mps: &[MatchedPos], rhs_mps: &[MatchedPos]) -> Vec<Hunk> {
+pub(crate) fn matched_pos_to_hunks(lhs_mps: &[MatchedPos], rhs_mps: &[MatchedPos]) -> Vec<Hunk> {
     lines_to_hunks(&matched_novel_lines(lhs_mps, rhs_mps), lhs_mps, rhs_mps)
 }
 
@@ -623,7 +623,7 @@ fn either_side_equal(
     false
 }
 
-pub fn matched_lines_indexes_for_hunk(
+pub(crate) fn matched_lines_indexes_for_hunk(
     matched_lines: &[(Option<LineNumber>, Option<LineNumber>)],
     hunk: &Hunk,
     num_context_lines: usize,
@@ -805,8 +805,8 @@ mod tests {
             (Some(2.into()), Some(2.into())),
         ];
 
-        let novel_lhs = HashSet::from_iter([1.into()]);
-        let novel_rhs = HashSet::from_iter([1.into()]);
+        let novel_lhs = DftHashSet::from_iter([1.into()]);
+        let novel_rhs = DftHashSet::from_iter([1.into()]);
         let hunk = Hunk {
             novel_lhs,
             novel_rhs,
@@ -835,8 +835,8 @@ mod tests {
             (Some(5.into()), Some(5.into())),
         ];
 
-        let novel_lhs = HashSet::from_iter([1.into()]);
-        let novel_rhs = HashSet::from_iter([2.into()]);
+        let novel_lhs = DftHashSet::from_iter([1.into()]);
+        let novel_rhs = DftHashSet::from_iter([2.into()]);
         let hunk = Hunk {
             novel_lhs,
             novel_rhs,

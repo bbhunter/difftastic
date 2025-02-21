@@ -7,6 +7,7 @@ use line_numbers::SingleLineSpan;
 use owo_colors::{OwoColorize, Style};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::lines::split_on_newlines;
 use crate::parse::syntax::StringKind;
 use crate::{
     constants::Side,
@@ -18,13 +19,13 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug)]
-pub enum BackgroundColor {
+pub(crate) enum BackgroundColor {
     Dark,
     Light,
 }
 
 impl BackgroundColor {
-    pub fn is_dark(self) -> bool {
+    pub(crate) fn is_dark(self) -> bool {
         matches!(self, BackgroundColor::Dark)
     }
 }
@@ -68,7 +69,7 @@ fn substring_by_byte_replace_tabs(s: &str, start: usize, end: usize, tab_width: 
 fn width_respecting_tabs(s: &str, tab_width: usize) -> usize {
     let display_width = s.width();
 
-    // .width() on tabs returns 0, wheras we want to model them as
+    // .width() on tabs returns 0, whereas we want to model them as
     // `tab_width` spaces.
     debug_assert_eq!("\t".width(), 0);
     let tab_count = s.matches('\t').count();
@@ -88,10 +89,22 @@ fn width_respecting_tabs(s: &str, tab_width: usize) -> usize {
 /// split_string_by_width("fooba", 3) // vec![("foo", 0), ("ba", 1)]
 /// ```
 fn split_string_by_width(s: &str, max_width: usize, tab_width: usize) -> Vec<(&str, usize)> {
-    let mut res: Vec<(&str, usize)> = vec![];
+    let mut parts: Vec<(&str, usize)> = vec![];
     let mut s = s;
 
-    while width_respecting_tabs(s, tab_width) > max_width {
+    // Optimisation: width_respecting_tabs() walks the whole string,
+    // which is slow when we have files with massive lines.
+    //
+    // A single character (grapheme) in UTF-8 can be 1, 2, 3 or 4
+    // bytes. A character's display width can be 0 (control
+    // characters), 1 (the typical case), 2 (e.g. fullwidth characters
+    // in Chinese, Japanese and Korean) or 4 (the default width for
+    // tabs in difftastic).
+    //
+    // Ignoring control characters, this means an n-byte UTF-8 string
+    // has a display width of at least n/4 characters. Check that case
+    // first, because it's a cheap conservative calculation.
+    while s.len() / 4 > max_width || width_respecting_tabs(s, tab_width) > max_width {
         let offset = byte_offset_for_width(s, max_width, tab_width);
 
         let part = substring_by_byte(s, 0, offset);
@@ -103,19 +116,19 @@ fn split_string_by_width(s: &str, max_width: usize, tab_width: usize) -> Vec<(&s
         } else {
             0
         };
-        res.push((part, padding));
+        parts.push((part, padding));
     }
 
-    if res.is_empty() || !s.is_empty() {
-        res.push((s, max_width - width_respecting_tabs(s, tab_width)));
+    if parts.is_empty() || !s.is_empty() {
+        parts.push((s, max_width - width_respecting_tabs(s, tab_width)));
     }
 
-    res
+    parts
 }
 
 /// Return a copy of `src` with all the tab characters replaced by
 /// `tab_width` strings.
-pub fn replace_tabs(src: &str, tab_width: usize) -> String {
+pub(crate) fn replace_tabs(src: &str, tab_width: usize) -> String {
     let tab_as_spaces = " ".repeat(tab_width);
     src.replace('\t', &tab_as_spaces)
 }
@@ -123,7 +136,7 @@ pub fn replace_tabs(src: &str, tab_width: usize) -> String {
 /// Split `line` (from the source code) into multiple lines of
 /// `max_len` (i.e. word wrapping), and apply `styles` to each part
 /// according to its original position in `line`.
-pub fn split_and_apply(
+pub(crate) fn split_and_apply(
     line: &str,
     max_len: usize,
     tab_width: usize,
@@ -147,13 +160,13 @@ pub fn split_and_apply(
             .map(|(part, pad)| {
                 let part = replace_tabs(part, tab_width);
 
-                let mut res = String::with_capacity(part.len() + pad);
-                res.push_str(&part);
+                let mut parts = String::with_capacity(part.len() + pad);
+                parts.push_str(&part);
 
                 if matches!(side, Side::Left) {
-                    res.push_str(&" ".repeat(pad));
+                    parts.push_str(&" ".repeat(pad));
                 }
-                res
+                parts
             })
             .collect();
     }
@@ -230,7 +243,7 @@ pub fn split_and_apply(
 /// specified.
 fn apply_line(line: &str, styles: &[(SingleLineSpan, Style)]) -> String {
     let line_bytes = byte_len(line);
-    let mut res = String::with_capacity(line.len());
+    let mut styled_line = String::with_capacity(line.len());
     let mut i = 0;
     for (span, style) in styles {
         let start_col = span.start_col as usize;
@@ -244,21 +257,21 @@ fn apply_line(line: &str, styles: &[(SingleLineSpan, Style)]) -> String {
 
         // Unstyled text before the next span.
         if i < start_col {
-            res.push_str(substring_by_byte(line, i, start_col));
+            styled_line.push_str(substring_by_byte(line, i, start_col));
         }
 
         // Apply style to the substring in this span.
         let span_s = substring_by_byte(line, start_col, min(line_bytes, end_col));
-        res.push_str(&span_s.style(*style).to_string());
+        styled_line.push_str(&span_s.style(*style).to_string());
         i = end_col;
     }
 
     // Unstyled text after the last span.
     if i < line_bytes {
         let span_s = substring_by_byte(line, i, line_bytes);
-        res.push_str(span_s);
+        styled_line.push_str(span_s);
     }
-    res
+    styled_line
 }
 
 fn group_by_line(
@@ -283,7 +296,7 @@ fn group_by_line(
 fn style_lines(lines: &[&str], styles: &[(SingleLineSpan, Style)]) -> Vec<String> {
     let mut ranges_by_line = group_by_line(styles);
 
-    let mut res = Vec::with_capacity(lines.len());
+    let mut styled_lines = Vec::with_capacity(lines.len());
     for (i, line) in lines.iter().enumerate() {
         let mut styled_line = String::with_capacity(line.len());
         let ranges = ranges_by_line
@@ -292,12 +305,12 @@ fn style_lines(lines: &[&str], styles: &[(SingleLineSpan, Style)]) -> Vec<String
 
         styled_line.push_str(&apply_line(line, &ranges));
         styled_line.push('\n');
-        res.push(styled_line);
+        styled_lines.push(styled_line);
     }
-    res
+    styled_lines
 }
 
-pub fn novel_style(style: Style, side: Side, background: BackgroundColor) -> Style {
+pub(crate) fn novel_style(style: Style, side: Side, background: BackgroundColor) -> Style {
     if background.is_dark() {
         match side {
             Side::Left => style.bright_red(),
@@ -311,7 +324,7 @@ pub fn novel_style(style: Style, side: Side, background: BackgroundColor) -> Sty
     }
 }
 
-pub fn color_positions(
+pub(crate) fn color_positions(
     side: Side,
     background: BackgroundColor,
     syntax_highlight: bool,
@@ -380,7 +393,7 @@ pub fn color_positions(
                     style = style.italic();
                 }
             }
-            MatchKind::NovelLinePart { highlight, .. } => {
+            MatchKind::UnchangedPartOfNovelItem { highlight, .. } => {
                 style = novel_style(style, side, background);
                 if syntax_highlight && matches!(highlight, TokenKind::Atom(AtomKind::Comment)) {
                     style = style.italic();
@@ -392,7 +405,7 @@ pub fn color_positions(
     styles
 }
 
-pub fn apply_colors(
+pub(crate) fn apply_colors(
     s: &str,
     side: Side,
     syntax_highlight: bool,
@@ -401,7 +414,7 @@ pub fn apply_colors(
     positions: &[MatchedPos],
 ) -> Vec<String> {
     let styles = color_positions(side, background, syntax_highlight, file_format, positions);
-    let lines = s.lines().collect::<Vec<_>>();
+    let lines = split_on_newlines(s).collect::<Vec<_>>();
     style_lines(&lines, &styles)
 }
 
@@ -413,7 +426,7 @@ fn apply_header_color(
 ) -> String {
     if use_color {
         if hunk_num != 1 {
-            s.to_string()
+            s.to_owned()
         } else if background.is_dark() {
             s.bright_yellow().to_string()
         } else {
@@ -422,8 +435,26 @@ fn apply_header_color(
         .bold()
         .to_string()
     } else {
-        s.to_string()
+        s.to_owned()
     }
+}
+
+/// Style `s` as a warning and write to stderr.
+pub(crate) fn print_warning(s: &str, display_options: &DisplayOptions) {
+    let prefix = if display_options.use_color {
+        if display_options.background_color.is_dark() {
+            "warning: ".bright_yellow().to_string()
+        } else {
+            "warning: ".yellow().to_string()
+        }
+        .bold()
+        .to_string()
+    } else {
+        "warning: ".to_owned()
+    };
+
+    eprint!("{}", prefix);
+    eprint!("{}\n\n", s);
 }
 
 pub(crate) fn apply_line_number_color(
@@ -450,11 +481,11 @@ pub(crate) fn apply_line_number_color(
 
         s.style(style).to_string()
     } else {
-        s.to_string()
+        s.to_owned()
     }
 }
 
-pub fn header(
+pub(crate) fn header(
     display_path: &str,
     extra_info: Option<&String>,
     hunk_num: usize,

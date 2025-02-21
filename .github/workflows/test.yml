@@ -10,21 +10,28 @@ jobs:
       fail-fast: false
       matrix:
         job:
+          # Operating systems available: https://docs.github.com/en/actions/using-github-hosted-runners/using-github-hosted-runners/about-github-hosted-runners#standard-github-hosted-runners-for-public-repositories
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-20.04 }
-          - { target: x86_64-apple-darwin, os: macos-latest }
-          - { target: x86_64-pc-windows-gnu, os: windows-latest }
-          - { target: x86_64-unknown-linux-musl, os: ubuntu-20.04, use-cross: true }
+          # mac-latest (currently mac-14) is an ARM device, so use macos-13 to get Intel.
+          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+
           - { target: aarch64-unknown-linux-gnu, os: ubuntu-20.04, use-cross: true }
-          - { target: aarch64-apple-darwin, os: macos-latest, use-cross: true }
+
+          # mac-14 is an M1 ARM device.
+          - { target: aarch64-apple-darwin, os: macos-14 }
+
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-20.04, use-cross: true }
     env:
       BUILD_CMD: cargo
+      SUBCOMMAND: test
 
     steps:
     - name: Checkout source code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@1.59.0
+      uses: dtolnay/rust-toolchain@1.74.1
       with:
         targets: ${{ matrix.job.target }}
 
@@ -32,7 +39,7 @@ jobs:
       if: matrix.job.use-cross
       uses: taiki-e/install-action@v2
       with:
-        tool: cross
+        tool: cross@0.2.5
 
     - name: Overwrite build command env variable
       if: matrix.job.use-cross
@@ -41,14 +48,14 @@ jobs:
 
     - name: Test
       shell: bash
-      run: $BUILD_CMD test
+      run: $BUILD_CMD $SUBCOMMAND --target ${{ matrix.job.target }}
 
   test_mime_db:
     name: Test with MIME database
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.59.0
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.74.1
       # This runs tests that rely on the MIME database being present.
       - run: cargo test -- --ignored
 
@@ -56,7 +63,7 @@ jobs:
     name: Test Linux (latest stable Rust)
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo +stable test
 
@@ -64,8 +71,8 @@ jobs:
     name: Output Regression Test
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.59.0
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.74.1
       - name: Generate output for all sample files
         run: ./sample_files/compare_all.sh
       - name: Verify output is unchanged
@@ -75,14 +82,23 @@ jobs:
     name: Check Linux Packaging
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.59.0
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.74.1
       - run: cargo package --allow-dirty
 
   fmt:
     name: Rustfmt
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v3
-      - uses: dtolnay/rust-toolchain@1.59.0
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.74.1
       - run: cargo fmt --all -- --check
+
+  actionlint:
+    name: Actionlint
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: raven-actions/actionlint@v2
+        with:
+          shellcheck: false

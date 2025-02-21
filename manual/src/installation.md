@@ -1,66 +1,82 @@
 # Installation
 
-## Installing a binary
+Diffstatic can be installed as pre-built binaries or using various package managers.
 
-Difftastic [provides GitHub
-releases](https://github.com/Wilfred/difftastic/releases) with
-prebuilt binaries. The
-[changelog](https://github.com/Wilfred/difftastic/blob/master/CHANGELOG.md)
-describes the changes in each release.
+## Pre-Built Binaries
 
-Packages are also available on the following platforms.
+Diffstatic releases are published as [GitHub releases](https://github.com/Wilfred/difftastic/releases) with pre-built binaries for Windows, macOS and Linux.
+Open the [latest release page](https://github.com/Wilfred/difftastic/releases/latest), download the file matching your OS and CPU architecture, and extract the `difft` executable application file.
 
-[![Packaging status](https://repology.org/badge/vertical-allrepos/difftastic.svg)](https://repology.org/project/difftastic/versions)
+## Package Manager
 
+### macOS
 
-## Installing via homebrew (on macOS or Linux)
-
-Difftastic can be installed with [Homebrew](https://formulae.brew.sh/formula/difftastic) on macOS or Linux.
-
+If you're a **Homebrew** user, you can install
+[difftastic](https://formulae.brew.sh/formula/difftastic) with `brew`.
 
 ```
 $ brew install difftastic
 ```
 
-## Installing from source
+### Linux and Unix
 
-### Build Requirements
-
-Difftastic is written in Rust, so you will need Rust installed. I
-recommend [rustup](https://rustup.rs/) to install Rust. Difftastic
-requires Rust version 1.59 or later.
-
-You will also need a C++ compiler that supports C++14. If you're using
-GCC, you need at least version 8.
-
-### Build
-
-You can download and build [difftastic on
-crates.io](https://crates.io/crates/difftastic) with Cargo (which is
-part of Rust).
+If you're an **Arch Linux** user, you can install
+[difftastic](https://archlinux.org/packages/extra/x86_64/difftastic/)
+with `pacman`.
 
 ```
-$ cargo install --locked difftastic
+$ sudo pacman -S difftastic
 ```
 
-Difftastic uses the `cc` crate for building C/C++ dependencies. This
-allows you to use environment variables `CC` and `CXX` to control the
-compiler used (see [the cc
-docs](https://github.com/alexcrichton/cc-rs#external-configuration-via-environment-variables)).
+If you're a **Nix** user, you can install
+[difftastic](https://github.com/NixOS/nixpkgs/blob/master/pkgs/tools/text/difftastic/default.nix)
+with `nix-env`.
 
-See [contributing](./contributing.md) for instructions on debug
-builds.
+```
+$ nix-env --install difftastic
+```
 
-## (Optional) Install MIME Database
+If you're a **Fedora** user, you can install [difftastic](https://packages.fedoraproject.org/pkgs/rust-difftastic/difftastic/) with `dnf`.
 
-If a MIME database is available, difftastic will use it to detect
-binary files more accurately. This is the same database used by the
-`file` command, so you probably already have it.
+```
+$ sudo dnf install difftastic
+```
 
-The MIME database path is [specified in the XDG
-specification](https://specifications.freedesktop.org/shared-mime-info-spec/0.11/ar01s03.html). The
-database should be at one of the following paths:
+If you're a **FreeBSD** user, you can install
+[difftastic](https://www.freshports.org/textproc/difftastic/)
+with `pkg`.
 
-* `/usr/share/mime/magic`
-* `/usr/local/share/mime/magic`
-* `$HOME/.local/share/mime/magic`
+```
+$ sudo pkg install difftastic
+```
+
+### Windows
+
+If you're a Windows user using **Windows Package Manager** (*WinGet*), you can install difftastic with `winget`.
+
+```
+$ winget install difftastic
+```
+
+If you're a Windows user using **Scoop**, you can install
+[difftastic](https://scoop.sh/#/apps?q=difftastic)
+with `scoop`.
+
+```
+$ scoop install difftastic
+```
+
+If you're a Windows user using **Chocolatey**, you can install
+[difftastic](https://community.chocolatey.org/packages/difftastic)
+with `choco`.
+
+```
+$ choco install difftastic
+```
+
+## Full Package Listing
+
+This table lists all the platforms that have packaged difftastic.
+
+[![Packaging status](https://repology.org/badge/vertical-allrepos/difftastic.svg)](https://repology.org/project/difftastic/versions)
+

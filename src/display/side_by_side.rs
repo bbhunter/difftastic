@@ -1,9 +1,6 @@
 //! Side-by-side (two column) display of diffs.
 
-use std::{
-    cmp::{max, min},
-    collections::HashSet,
-};
+use std::cmp::{max, min};
 
 use line_numbers::LineNumber;
 use line_numbers::SingleLineSpan;
@@ -11,14 +8,16 @@ use owo_colors::{OwoColorize, Style};
 
 use crate::{
     constants::Side,
-    display::context::all_matched_lines_filled,
-    display::hunks::{matched_lines_indexes_for_hunk, Hunk},
-    display::style::{
-        self, apply_colors, apply_line_number_color, color_positions, novel_style, split_and_apply,
-        BackgroundColor,
+    display::{
+        context::all_matched_lines_filled,
+        hunks::{matched_lines_indexes_for_hunk, Hunk},
+        style::{
+            self, apply_colors, apply_line_number_color, color_positions, novel_style,
+            replace_tabs, split_and_apply, BackgroundColor,
+        },
     },
-    hash::DftHashMap,
-    lines::{codepoint_len, format_line_num},
+    hash::{DftHashMap, DftHashSet},
+    lines::{format_line_num, split_on_newlines},
     options::{DisplayMode, DisplayOptions},
     parse::syntax::{zip_pad_shorter, MatchedPos},
     summary::FileFormat,
@@ -76,7 +75,7 @@ fn display_single_column(
 ) -> Vec<String> {
     let column_width = format_line_num((src_lines.len() as u32).into()).len();
 
-    let mut result = Vec::with_capacity(src_lines.len());
+    let mut formatted_lines = Vec::with_capacity(src_lines.len());
 
     let mut header_line = String::new();
     header_line.push_str(&style::header(
@@ -88,7 +87,7 @@ fn display_single_column(
         display_options,
     ));
     header_line.push('\n');
-    result.push(header_line);
+    formatted_lines.push(header_line);
 
     let mut style = Style::new();
     if display_options.use_color {
@@ -103,10 +102,10 @@ fn display_single_column(
                 .to_string(),
         );
         formatted_line.push_str(line);
-        result.push(formatted_line);
+        formatted_lines.push(formatted_line);
     }
 
-    result
+    formatted_lines
 }
 
 fn display_line_nums(
@@ -152,7 +151,7 @@ fn display_line_nums(
 struct SourceDimensions {
     /// The number of characters used to display source lines. Any
     /// line that exceeds this length will be wrapped.
-    content_width: usize,
+    content_display_width: usize,
     /// The number of characters required to display line numbers on
     /// the LHS.
     lhs_line_nums_width: usize,
@@ -169,35 +168,47 @@ impl SourceDimensions {
     fn new(
         terminal_width: usize,
         line_nums: &[(Option<LineNumber>, Option<LineNumber>)],
-        lhs_lines: &[&str],
-        rhs_lines: &[&str],
+        content_max_width: usize,
     ) -> Self {
         let mut lhs_max_line: LineNumber = 1.into();
         let mut rhs_max_line: LineNumber = 1.into();
-        let mut lhs_max_content = 1;
-        let mut rhs_max_content = 1;
 
         for (lhs_line_num, rhs_line_num) in line_nums {
             if let Some(lhs_line_num) = lhs_line_num {
                 lhs_max_line = max(lhs_max_line, *lhs_line_num);
-                lhs_max_content = max(
-                    lhs_max_content,
-                    codepoint_len(lhs_lines[lhs_line_num.as_usize()]),
-                );
             }
             if let Some(rhs_line_num) = rhs_line_num {
                 rhs_max_line = max(rhs_max_line, *rhs_line_num);
-                rhs_max_content = max(
-                    rhs_max_content,
-                    codepoint_len(rhs_lines[rhs_line_num.as_usize()]),
-                );
             }
         }
 
         let lhs_line_nums_width = format_line_num(lhs_max_line).len();
         let rhs_line_nums_width = format_line_num(rhs_max_line).len();
 
-        let lhs_total_width = (terminal_width - SPACER.len()) / 2;
+        // If the file lines are extremely short, treat them as if
+        // they have a line of 25 characters.
+        let content_max_width = max(content_max_width, 25);
+
+        // If the terminal is very wide, we don't want to use the full
+        // 50% for the LHS column, we end up with too much space
+        // between LHS and RHS.
+        //
+        // Instead, cap the display width based on the maximum length
+        // of lines within the file.
+        //
+        // This is a crude heuristic because it ignores which lines of
+        // the file actually get displayed, so we can still end up
+        // with some superfluous space. It also naively assumes that
+        // byte length is the same display length, which is generally
+        // OK because byte length will tend to be larger than the
+        // display length.
+        let display_width = min(terminal_width, (content_max_width + 4) * 2 + SPACER.len());
+
+        assert!(
+            display_width > SPACER.len(),
+            "Terminal total width should not overflow"
+        );
+        let lhs_total_width = (display_width - SPACER.len()) / 2;
 
         let lhs_content_width = if lhs_line_nums_width < lhs_total_width {
             lhs_total_width - lhs_line_nums_width
@@ -210,7 +221,7 @@ impl SourceDimensions {
 
         let rhs_content_width = max(
             1,
-            terminal_width as isize
+            display_width as isize
                 - lhs_total_width as isize
                 - SPACER.len() as isize
                 - rhs_line_nums_width as isize,
@@ -222,7 +233,7 @@ impl SourceDimensions {
         let content_width = min(lhs_content_width, rhs_content_width);
 
         Self {
-            content_width,
+            content_display_width: content_width,
             lhs_line_nums_width,
             rhs_line_nums_width,
             lhs_max_line,
@@ -231,16 +242,16 @@ impl SourceDimensions {
     }
 }
 
-pub fn lines_with_novel(
+pub(crate) fn lines_with_novel(
     lhs_mps: &[MatchedPos],
     rhs_mps: &[MatchedPos],
-) -> (HashSet<LineNumber>, HashSet<LineNumber>) {
-    let lhs_lines_with_novel: HashSet<LineNumber> = lhs_mps
+) -> (DftHashSet<LineNumber>, DftHashSet<LineNumber>) {
+    let lhs_lines_with_novel: DftHashSet<LineNumber> = lhs_mps
         .iter()
         .filter(|mp| mp.kind.is_novel())
         .map(|mp| mp.pos.line)
         .collect();
-    let rhs_lines_with_novel: HashSet<LineNumber> = rhs_mps
+    let rhs_lines_with_novel: DftHashSet<LineNumber> = rhs_mps
         .iter()
         .filter(|mp| mp.kind.is_novel())
         .map(|mp| mp.pos.line)
@@ -297,7 +308,7 @@ fn highlight_as_novel(
     line_num: Option<LineNumber>,
     lines: &[&str],
     opposite_line_num: Option<LineNumber>,
-    lines_with_novel: &HashSet<LineNumber>,
+    lines_with_novel: &DftHashSet<LineNumber>,
 ) -> bool {
     if let Some(line_num) = line_num {
         // If this line contains any novel tokens, highlight it.
@@ -317,7 +328,7 @@ fn highlight_as_novel(
     false
 }
 
-pub fn print(
+pub(crate) fn print(
     hunks: &[Hunk],
     display_options: &DisplayOptions,
     display_path: &str,
@@ -328,6 +339,14 @@ pub fn print(
     lhs_mps: &[MatchedPos],
     rhs_mps: &[MatchedPos],
 ) {
+    let mut content_max_width: usize = 0;
+    for line in lhs_src.lines() {
+        content_max_width = max(content_max_width, line.len());
+    }
+    for line in rhs_src.lines() {
+        content_max_width = max(content_max_width, line.len());
+    }
+
     let (lhs_colored_lines, rhs_colored_lines) = if display_options.use_color {
         (
             apply_colors(
@@ -349,12 +368,32 @@ pub fn print(
         )
     } else {
         (
-            lhs_src.lines().map(|s| format!("{}\n", s)).collect(),
-            rhs_src.lines().map(|s| format!("{}\n", s)).collect(),
+            split_on_newlines(lhs_src)
+                .map(|s| format!("{}\n", s))
+                .collect(),
+            split_on_newlines(rhs_src)
+                .map(|s| format!("{}\n", s))
+                .collect(),
         )
     };
 
-    if lhs_src.is_empty() {
+    // Style positions are relative to the source code offsets. Now
+    // that we've applied styling, we can replace tabs.
+    let lhs_colored_lines: Vec<_> = lhs_colored_lines
+        .iter()
+        .map(|l| replace_tabs(l, display_options.tab_width))
+        .collect();
+    let rhs_colored_lines: Vec<_> = rhs_colored_lines
+        .iter()
+        .map(|l| replace_tabs(l, display_options.tab_width))
+        .collect();
+
+    if lhs_src.is_empty()
+        && !matches!(
+            display_options.display_mode,
+            DisplayMode::SideBySideShowBoth
+        )
+    {
         for line in display_single_column(
             display_path,
             old_path,
@@ -368,7 +407,12 @@ pub fn print(
         println!();
         return;
     }
-    if rhs_src.is_empty() {
+    if rhs_src.is_empty()
+        && !matches!(
+            display_options.display_mode,
+            DisplayMode::SideBySideShowBoth
+        )
+    {
         for line in display_single_column(
             display_path,
             old_path,
@@ -401,8 +445,16 @@ pub fn print(
     let mut prev_lhs_line_num = None;
     let mut prev_rhs_line_num = None;
 
-    let lhs_lines = lhs_src.lines().collect::<Vec<_>>();
-    let rhs_lines = rhs_src.lines().collect::<Vec<_>>();
+    let mut lhs_lines = split_on_newlines(lhs_src).collect::<Vec<_>>();
+    let mut rhs_lines = split_on_newlines(rhs_src).collect::<Vec<_>>();
+
+    if lhs_lines.last() == Some(&"") && lhs_lines.len() > 1 {
+        lhs_lines.pop();
+    }
+    if rhs_lines.last() == Some(&"") && rhs_lines.len() > 1 {
+        rhs_lines.pop();
+    }
+
     let matched_lines = all_matched_lines_filled(lhs_mps, rhs_mps, &lhs_lines, &rhs_lines);
     let mut matched_lines_to_print = &matched_lines[..];
 
@@ -437,10 +489,9 @@ pub fn print(
         let same_lines = aligned_lines.iter().all(|(l, r)| l == r);
 
         let source_dims = SourceDimensions::new(
-            display_options.display_width,
+            display_options.terminal_width,
             aligned_lines,
-            &lhs_lines,
-            &rhs_lines,
+            content_max_width,
         );
         for (lhs_line_num, rhs_line_num) in aligned_lines {
             let lhs_line_novel = highlight_as_novel(
@@ -512,17 +563,17 @@ pub fn print(
                 let lhs_line = match lhs_line_num {
                     Some(lhs_line_num) => split_and_apply(
                         lhs_lines[lhs_line_num.as_usize()],
-                        source_dims.content_width,
+                        source_dims.content_display_width,
                         display_options.tab_width,
                         lhs_highlights.get(lhs_line_num).unwrap_or(&vec![]),
                         Side::Left,
                     ),
-                    None => vec![" ".repeat(source_dims.content_width)],
+                    None => vec![" ".repeat(source_dims.content_display_width)],
                 };
                 let rhs_line = match rhs_line_num {
                     Some(rhs_line_num) => split_and_apply(
                         rhs_lines[rhs_line_num.as_usize()],
-                        source_dims.content_width,
+                        source_dims.content_display_width,
                         display_options.tab_width,
                         rhs_highlights.get(rhs_line_num).unwrap_or(&vec![]),
                         Side::Right,
@@ -535,7 +586,7 @@ pub fn print(
                     .enumerate()
                 {
                     let lhs_line =
-                        lhs_line.unwrap_or_else(|| " ".repeat(source_dims.content_width));
+                        lhs_line.unwrap_or_else(|| " ".repeat(source_dims.content_display_width));
                     let rhs_line = rhs_line.unwrap_or_else(|| "".into());
                     let lhs_num: String = if i == 0 {
                         display_lhs_line_num.clone()
@@ -599,6 +650,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        options::DEFAULT_TERMINAL_WIDTH,
         parse::guess_language::Language,
         syntax::{AtomKind, MatchKind, TokenKind},
     };
@@ -606,14 +658,7 @@ mod tests {
     #[test]
     fn test_width_calculations() {
         let line_nums = [(Some(1.into()), Some(10.into()))];
-        let source_dims = SourceDimensions::new(
-            80,
-            &line_nums,
-            &"foo\nbar\n".lines().collect::<Vec<_>>(),
-            &"x\nx\nx\nx\nx\nx\nx\nx\nx\nx\nx\n"
-                .lines()
-                .collect::<Vec<_>>(),
-        );
+        let source_dims = SourceDimensions::new(DEFAULT_TERMINAL_WIDTH, &line_nums, 9999);
 
         assert_eq!(source_dims.lhs_line_nums_width, 2);
         assert_eq!(source_dims.rhs_line_nums_width, 3);
@@ -622,13 +667,12 @@ mod tests {
     #[test]
     fn test_format_missing_line_num() {
         let source_dims = SourceDimensions::new(
-            80,
+            DEFAULT_TERMINAL_WIDTH,
             &[
                 (Some(0.into()), Some(0.into())),
                 (Some(1.into()), Some(1.into())),
             ],
-            &"foo\nbar\n".lines().collect::<Vec<_>>(),
-            &"fox\nbax\n".lines().collect::<Vec<_>>(),
+            9999,
         );
 
         assert_eq!(
@@ -637,7 +681,7 @@ mod tests {
         );
         assert_eq!(
             format_missing_line_num(0.into(), &source_dims, Side::Left, false),
-            ". ".to_string()
+            ". ".to_owned()
         );
     }
 
@@ -649,8 +693,7 @@ mod tests {
                 (Some(0.into()), Some(0.into())),
                 (Some(1.into()), Some(1.into())),
             ],
-            &"foo\nbar\n".lines().collect::<Vec<_>>(),
-            &"fox\nbax\n".lines().collect::<Vec<_>>(),
+            9999,
         );
 
         assert_eq!(
@@ -659,7 +702,7 @@ mod tests {
         );
         assert_eq!(
             format_missing_line_num(1.into(), &source_dims, Side::Left, false),
-            "  ".to_string()
+            "  ".to_owned()
         );
     }
 
@@ -670,7 +713,7 @@ mod tests {
             "foo.py",
             None,
             &FileFormat::SupportedLanguage(Language::Python),
-            &["print(123)\n".to_string()],
+            &["print(123)\n".to_owned()],
             Side::Right,
             &DisplayOptions::default(),
         );
@@ -709,9 +752,9 @@ mod tests {
             },
         }];
 
-        let mut novel_lhs = HashSet::new();
+        let mut novel_lhs = DftHashSet::default();
         novel_lhs.insert(0.into());
-        let mut novel_rhs = HashSet::new();
+        let mut novel_rhs = DftHashSet::default();
         novel_rhs.insert(0.into());
 
         let hunks = [Hunk {

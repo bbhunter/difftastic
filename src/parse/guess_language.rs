@@ -17,8 +17,9 @@ use strum::{EnumIter, IntoEnumIterator};
 /// Languages supported by difftastic. Each language here has a
 /// corresponding tree-sitter parser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
-pub enum Language {
+pub(crate) enum Language {
     Ada,
+    Apex,
     Bash,
     C,
     Clojure,
@@ -28,11 +29,13 @@ pub enum Language {
     CSharp,
     Css,
     Dart,
+    DeviceTree,
     Elixir,
     Elm,
     Elvish,
     EmacsLisp,
     Erlang,
+    FSharp,
     Gleam,
     Go,
     Hack,
@@ -52,6 +55,7 @@ pub enum Language {
     Make,
     Newick,
     Nix,
+    ObjC,
     OCaml,
     OCamlInterface,
     Pascal,
@@ -64,26 +68,30 @@ pub enum Language {
     Ruby,
     Rust,
     Scala,
+    Scheme,
+    Scss,
+    Smali,
     Solidity,
     Sql,
     Swift,
     Toml,
     TypeScript,
     TypeScriptTsx,
+    Vhdl,
     Xml,
     Yaml,
     Zig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LanguageOverride {
+pub(crate) enum LanguageOverride {
     Language(Language),
     PlainText,
 }
 
 /// If there is a language called `name` (comparing case
 /// insensitively), return it. Treat `"text"` as an additional option.
-pub fn language_override_from_name(name: &str) -> Option<LanguageOverride> {
+pub(crate) fn language_override_from_name(name: &str) -> Option<LanguageOverride> {
     let name = name.trim().to_lowercase();
 
     if name == "text" {
@@ -101,9 +109,10 @@ pub fn language_override_from_name(name: &str) -> Option<LanguageOverride> {
 }
 
 /// The language name shown to the user.
-pub fn language_name(language: Language) -> &'static str {
+pub(crate) fn language_name(language: Language) -> &'static str {
     match language {
         Ada => "Ada",
+        Apex => "Apex",
         Bash => "Bash",
         C => "C",
         Clojure => "Clojure",
@@ -113,11 +122,13 @@ pub fn language_name(language: Language) -> &'static str {
         CSharp => "C#",
         Css => "CSS",
         Dart => "Dart",
+        DeviceTree => "Device Tree",
         Elixir => "Elixir",
         Elm => "Elm",
         Elvish => "Elvish",
         EmacsLisp => "Emacs Lisp",
         Erlang => "Erlang",
+        FSharp => "F#",
         Gleam => "Gleam",
         Go => "Go",
         Hack => "Hack",
@@ -137,6 +148,7 @@ pub fn language_name(language: Language) -> &'static str {
         Make => "Make",
         Newick => "Newick",
         Nix => "Nix",
+        ObjC => "Objective-C",
         OCaml => "OCaml",
         OCamlInterface => "OCaml Interface",
         Pascal => "Pascal",
@@ -149,12 +161,16 @@ pub fn language_name(language: Language) -> &'static str {
         Ruby => "Ruby",
         Rust => "Rust",
         Scala => "Scala",
+        Scheme => "Scheme",
+        Smali => "Smali",
+        Scss => "SCSS",
         Solidity => "Solidity",
         Sql => "SQL",
         Swift => "Swift",
         Toml => "TOML",
         TypeScript => "TypeScript",
         TypeScriptTsx => "TypeScript TSX",
+        Vhdl => "VHDL",
         Xml => "XML",
         Yaml => "YAML",
         Zig => "Zig",
@@ -163,8 +179,10 @@ pub fn language_name(language: Language) -> &'static str {
 
 use Language::*;
 
+use crate::lines::split_on_newlines;
+
 /// File globs that identify languages based on the file path.
-pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
+pub(crate) fn language_globs(language: Language) -> Vec<glob::Pattern> {
     let glob_strs: &'static [&'static str] = match language {
         Ada => &["*.ada", "*.adb", "*.ads"],
         Bash => &[
@@ -215,6 +233,7 @@ pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "zshenv",
             "zshrc",
         ],
+        Apex => &["*.cls", "*.apexc", "*.trigger"],
         C => &["*.c"],
         Clojure => &[
             "*.bb", "*.boot", "*.clj", "*.cljc", "*.clje", "*.cljs", "*.cljx", "*.edn", "*.joke",
@@ -232,6 +251,7 @@ pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
         CSharp => &["*.cs"],
         Css => &["*.css"],
         Dart => &["*.dart"],
+        DeviceTree => &["*.dts", "*.dtsi", "*.dtso", "*.its"],
         Elm => &["*.elm"],
         EmacsLisp => &["*.el", ".emacs", "_emacs", "Cask"],
         Elixir => &["*.ex", "*.exs"],
@@ -246,6 +266,7 @@ pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "*.yrl",
             "Emakefile",
         ],
+        FSharp => &["*.fs", "*.fsx", "*.fsi"],
         Gleam => &["*.gleam"],
         Go => &["*.go"],
         Hack => &["*.hack", "*.hck", "*.hhi"],
@@ -255,7 +276,7 @@ pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
         Html => &["*.html", "*.htm", "*.xhtml"],
         Janet => &["*.janet", "*.jdn"],
         Java => &["*.java"],
-        JavaScript => &["*.cjs", "*.js", "*.mjs"],
+        JavaScript => &["*.cjs", "*.js", "*.mjs", "*.snap"],
         Json => &[
             "*.json",
             "*.avsc",
@@ -283,6 +304,7 @@ pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "Pipfile.lock",
             "composer.lock",
             "mcmod.info",
+            "flake.lock",
         ],
         JavascriptJsx => &["*.jsx"],
         Julia => &["*.jl"],
@@ -303,7 +325,7 @@ pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "Makefile.am",
             "Makefile.boot",
             "Makefile.frag",
-            "Makefile.in",
+            "Makefile*.in",
             "Makefile.inc",
             "Makefile.wat",
             "makefile",
@@ -312,11 +334,14 @@ pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
         ],
         Newick => &["*.nhx", "*.nwk", "*.nh"],
         Nix => &["*.nix"],
+        ObjC => &["*.m"],
         OCaml => &["*.ml"],
         OCamlInterface => &["*.mli"],
         Pascal => &["*.pas", "*.dfm", "*.dpr", "*.lpr", "*.pascal"],
         Perl => &["*.pm", "*.pl"],
-        Php => &["*.php"],
+        Php => &[
+            "*.php", "*.phtml", "*.php3", "*.php4", "*.php5", "*.php7", "*.phps",
+        ],
         Python => &["*.py", "*.py3", "*.pyi", "*.bzl", "TARGETS", "BUCK", "DEPS"],
         Qml => &["*.qml"],
         R => &["*.R", "*.r", "*.rd", "*.rsx", ".Rprofile", "expr-dist"],
@@ -331,6 +356,9 @@ pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
         ],
         Rust => &["*.rs"],
         Scala => &["*.scala", "*.sbt", "*.sc"],
+        Scheme => &["*.scm", "*.sch", "*.ss"],
+        Smali => &["*.smali"],
+        Scss => &["*.scss"],
         Solidity => &["*.sol"],
         Sql => &["*.sql", "*.pgsql"],
         Swift => &["*.swift"],
@@ -339,13 +367,19 @@ pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "Cargo.lock",
             "Gopkg.lock",
             "Pipfile",
+            "pdm.lock",
             "poetry.lock",
+            "uv.lock",
         ],
         TypeScript => &["*.ts"],
         TypeScriptTsx => &["*.tsx"],
+        Vhdl => &["*.vhdl", "*.vhd"],
         Xml => &[
             "*.ant",
             "*.csproj",
+            // Following GitHub, treat MJML as XML.
+            // https://documentation.mjml.io/
+            "*.mjml",
             "*.plist",
             "*.resx",
             "*.svg",
@@ -353,8 +387,10 @@ pub fn language_globs(language: Language) -> Vec<glob::Pattern> {
             "*.vbproj",
             "*.xaml",
             "*.xml",
+            "*.xsd",
             "*.xsl",
             "*.xslt",
+            "*.zcml",
             "App.config",
             "nuget.config",
             "packages.config",
@@ -384,7 +420,29 @@ fn looks_like_hacklang(path: &Path, src: &str) -> bool {
     false
 }
 
-pub fn guess(
+/// Use a heuristic to determine if a '.h' file looks like Objective-C.
+/// We look for a line starting with '#import', '@interface' or '@protocol'
+/// near the top of the file.  These keywords are not valid C or C++, so this
+/// should not produce false positives.
+fn looks_like_objc(path: &Path, src: &str) -> bool {
+    if let Some(extension) = path.extension() {
+        if extension == "h" {
+            return split_on_newlines(src).take(100).any(|line| {
+                ["#import", "@interface", "@protocol"]
+                    .iter()
+                    .any(|keyword| line.starts_with(keyword))
+            });
+        }
+    }
+
+    false
+}
+
+fn looks_like_xml(src: &str) -> bool {
+    src.starts_with("<?xml")
+}
+
+pub(crate) fn guess(
     path: &Path,
     src: &str,
     overrides: &[(LanguageOverride, Vec<glob::Pattern>)],
@@ -411,11 +469,23 @@ pub fn guess(
     if let Some(lang) = from_shebang(src) {
         return Some(lang);
     }
+
+    // Handle cases where file detection should override globbing,
+    // specifically *.php as potentially Hack or *.h as potentially
+    // Objective-C.
     if looks_like_hacklang(path, src) {
         return Some(Language::Hack);
     }
+    if looks_like_objc(path, src) {
+        return Some(Language::ObjC);
+    }
+
     if let Some(lang) = from_glob(path) {
         return Some(lang);
+    }
+
+    if looks_like_xml(src) {
+        return Some(Language::Xml);
     }
 
     None
@@ -434,7 +504,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
 
     // Emacs allows the mode header to occur on the second line if the
     // first line is a shebang.
-    for line in src.lines().take(2) {
+    for line in split_on_newlines(src).take(2) {
         let mode_name: String = match (MODE_RE.captures(line), SHORTHAND_RE.captures(line)) {
             (Some(cap), _) | (_, Some(cap)) => cap[1].into(),
             _ => "".into(),
@@ -451,6 +521,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "elm" => Some(Elm),
             "elvish" => Some(Elvish),
             "emacs-lisp" => Some(EmacsLisp),
+            "fsharp" => Some(FSharp),
             "gleam" => Some(Gleam),
             "go" => Some(Go),
             "haskell" => Some(Haskell),
@@ -461,6 +532,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "js" | "js2" => Some(JavaScript),
             "lisp" => Some(CommonLisp),
             "nxml" => Some(Xml),
+            "objc" => Some(ObjC),
             "perl" => Some(Perl),
             "python" => Some(Python),
             "racket" => Some(Racket),
@@ -468,6 +540,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "ruby" => Some(Ruby),
             "rust" => Some(Rust),
             "scala" => Some(Scala),
+            "scss" => Some(Scss),
             "sh" => Some(Bash),
             "solidity" => Some(Solidity),
             "sql" => Some(Sql),
@@ -475,6 +548,7 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
             "toml" => Some(Toml),
             "tuareg" => Some(OCaml),
             "typescript" => Some(TypeScript),
+            "vhdl" => Some(Vhdl),
             "yaml" => Some(Yaml),
             "zig" => Some(Zig),
             _ => None,
@@ -490,9 +564,9 @@ fn from_emacs_mode_header(src: &str) -> Option<Language> {
 /// Try to guess the language based on a shebang present in the source.
 fn from_shebang(src: &str) -> Option<Language> {
     lazy_static! {
-        static ref RE: Regex = Regex::new(r"#!(?:/usr/bin/env )?([^ ]+)").unwrap();
+        static ref RE: Regex = Regex::new(r"#! *(?:/usr/bin/env )?([^ ]+)").unwrap();
     }
-    if let Some(first_line) = src.lines().next() {
+    if let Some(first_line) = split_on_newlines(src).next() {
         if let Some(cap) = RE.captures(first_line) {
             let interpreter_path = Path::new(&cap[1]);
             if let Some(name) = interpreter_path.file_name() {
@@ -579,6 +653,12 @@ mod tests {
     }
 
     #[test]
+    fn test_guess_by_shebang_with_space() {
+        let path = Path::new("foo");
+        assert_eq!(guess(path, "#! /bin/sh", &[]), Some(Bash));
+    }
+
+    #[test]
     fn test_guess_by_emacs_mode() {
         let path = Path::new("foo");
         assert_eq!(
@@ -606,6 +686,15 @@ mod tests {
     fn test_guess_by_emacs_mode_shorthand_no_spaces() {
         let path = Path::new("foo");
         assert_eq!(guess(path, "# -*-python-*-", &[]), Some(Python));
+    }
+
+    #[test]
+    fn test_guess_by_xml_header() {
+        let path = Path::new("foo");
+        assert_eq!(
+            guess(path, "<?xml version=\"1.0\" encoding=\"utf-8\"?>", &[]),
+            Some(Xml)
+        );
     }
 
     #[test]

@@ -37,7 +37,7 @@ use crate::{
     parse::syntax::Syntax::{self, *},
 };
 
-pub fn fix_all_sliders<'a>(
+pub(crate) fn fix_all_sliders<'a>(
     language: guess_language::Language,
     nodes: &[&'a Syntax<'a>],
     change_map: &mut ChangeMap<'a>,
@@ -56,7 +56,7 @@ fn prefer_outer_delimiter(language: guess_language::Language) -> bool {
     match language {
         // For Lisp family languages, we get the best result with the
         // outer delimiter.
-        EmacsLisp | Clojure | CommonLisp | Janet | Racket | Newick => true,
+        EmacsLisp | Clojure | CommonLisp | Janet | Racket | Scheme | Newick => true,
         // JSON and TOML are like Lisp: the outer delimiter in an array object
         // is the most relevant.
         Json | Toml | Hcl => true,

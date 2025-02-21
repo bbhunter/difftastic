@@ -2,16 +2,18 @@
 
 use crate::{
     constants::Side,
-    display::context::{calculate_after_context, calculate_before_context, opposite_positions},
-    display::hunks::Hunk,
-    display::style::{self, apply_colors, apply_line_number_color},
-    lines::{format_line_num, MaxLine},
+    display::{
+        context::{calculate_after_context, calculate_before_context, opposite_positions},
+        hunks::Hunk,
+        style::{self, apply_colors, apply_line_number_color},
+    },
+    lines::{format_line_num, split_on_newlines, MaxLine},
     options::DisplayOptions,
     parse::syntax::MatchedPos,
     summary::FileFormat,
 };
 
-pub fn print(
+pub(crate) fn print(
     lhs_src: &str,
     rhs_src: &str,
     display_options: &DisplayOptions,
@@ -43,8 +45,12 @@ pub fn print(
         )
     } else {
         (
-            lhs_src.lines().map(|s| format!("{}\n", s)).collect(),
-            rhs_src.lines().map(|s| format!("{}\n", s)).collect(),
+            split_on_newlines(lhs_src)
+                .map(|s| format!("{}\n", s))
+                .collect(),
+            split_on_newlines(rhs_src)
+                .map(|s| format!("{}\n", s))
+                .collect(),
         )
     };
 

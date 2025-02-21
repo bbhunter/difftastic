@@ -15,7 +15,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct ExceededGraphLimit {}
+pub(crate) struct ExceededGraphLimit {}
 
 /// Return the shortest route from `start` to the end vertex.
 fn shortest_vertex_path<'s, 'b>(
@@ -42,7 +42,7 @@ fn shortest_vertex_path<'s, 'b>(
                 }
 
                 set_neighbours(current, vertex_arena, &mut seen);
-                for neighbour in current.neighbours.borrow().as_ref().unwrap() {
+                for neighbour in *current.neighbours.borrow().as_ref().unwrap() {
                     let (edge, next) = neighbour;
                     let distance_to_next = distance + edge.cost();
 
@@ -59,8 +59,8 @@ fn shortest_vertex_path<'s, 'b>(
 
                 if seen.len() > graph_limit {
                     info!(
-                        "Reached graph limit, arena consumed {} bytes",
-                        vertex_arena.allocated_bytes(),
+                        "Reached graph limit, arena consumed {}",
+                        humansize::format_size(vertex_arena.allocated_bytes(), humansize::BINARY),
                     );
                     return Err(ExceededGraphLimit {});
                 }
@@ -70,10 +70,10 @@ fn shortest_vertex_path<'s, 'b>(
     };
 
     info!(
-        "Saw {} vertices (a Vertex is {} bytes), arena consumed {} bytes, with {} vertices left on heap.",
+        "Saw {} vertices (a Vertex is {} bytes), arena consumed {}, with {} vertices left on heap.",
         seen.len(),
         std::mem::size_of::<Vertex>(),
-        vertex_arena.allocated_bytes(),
+        humansize::format_size(vertex_arena.allocated_bytes(), humansize::BINARY),
         heap.len(),
     );
 
@@ -128,7 +128,7 @@ fn edge_between<'s, 'b>(before: &Vertex<'s, 'b>, after: &Vertex<'s, 'b>) -> Edge
 
     let mut shortest_edge: Option<Edge> = None;
     if let Some(neighbours) = &*before.neighbours.borrow() {
-        for neighbour in neighbours {
+        for neighbour in *neighbours {
             let (edge, next) = *neighbour;
             // If there are multiple edges that can take us to `next`,
             // prefer the shortest.
@@ -186,7 +186,7 @@ fn tree_count(root: Option<&Syntax>) -> u32 {
     count
 }
 
-pub fn mark_syntax<'a>(
+pub(crate) fn mark_syntax<'a>(
     lhs_syntax: Option<&'a Syntax<'a>>,
     rhs_syntax: Option<&'a Syntax<'a>>,
     change_map: &mut ChangeMap<'a>,
@@ -320,7 +320,7 @@ mod tests {
         )];
         init_all_info(&lhs, &rhs);
 
-        let start = Vertex::new(lhs.get(0).copied(), rhs.get(0).copied());
+        let start = Vertex::new(lhs.first().copied(), rhs.first().copied());
         let vertex_arena = Bump::new();
         let route = shortest_path(start, &vertex_arena, 0, DEFAULT_GRAPH_LIMIT).unwrap();
 
@@ -362,7 +362,7 @@ mod tests {
         )];
         init_all_info(&lhs, &rhs);
 
-        let start = Vertex::new(lhs.get(0).copied(), rhs.get(0).copied());
+        let start = Vertex::new(lhs.first().copied(), rhs.first().copied());
         let vertex_arena = Bump::new();
         let route = shortest_path(start, &vertex_arena, 0, DEFAULT_GRAPH_LIMIT).unwrap();
 
@@ -408,7 +408,7 @@ mod tests {
         )];
         init_all_info(&lhs, &rhs);
 
-        let start = Vertex::new(lhs.get(0).copied(), rhs.get(0).copied());
+        let start = Vertex::new(lhs.first().copied(), rhs.first().copied());
         let vertex_arena = Bump::new();
         let route = shortest_path(start, &vertex_arena, 0, DEFAULT_GRAPH_LIMIT).unwrap();
 
@@ -449,7 +449,7 @@ mod tests {
         )];
         init_all_info(&lhs, &rhs);
 
-        let start = Vertex::new(lhs.get(0).copied(), rhs.get(0).copied());
+        let start = Vertex::new(lhs.first().copied(), rhs.first().copied());
         let vertex_arena = Bump::new();
         let route = shortest_path(start, &vertex_arena, 0, DEFAULT_GRAPH_LIMIT).unwrap();
 
@@ -481,7 +481,7 @@ mod tests {
         )];
         init_all_info(&lhs, &rhs);
 
-        let start = Vertex::new(lhs.get(0).copied(), rhs.get(0).copied());
+        let start = Vertex::new(lhs.first().copied(), rhs.first().copied());
         let vertex_arena = Bump::new();
         let route = shortest_path(start, &vertex_arena, 0, DEFAULT_GRAPH_LIMIT).unwrap();
 
@@ -521,7 +521,7 @@ mod tests {
         )];
         init_all_info(&lhs, &rhs);
 
-        let start = Vertex::new(lhs.get(0).copied(), rhs.get(0).copied());
+        let start = Vertex::new(lhs.first().copied(), rhs.first().copied());
         let vertex_arena = Bump::new();
         let route = shortest_path(start, &vertex_arena, 0, DEFAULT_GRAPH_LIMIT).unwrap();
 

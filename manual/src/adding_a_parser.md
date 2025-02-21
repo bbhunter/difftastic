@@ -97,8 +97,8 @@ Json => "json",
 ```
 
 There may also file names or shebangs associated with your language; configure those
-by adapting the `LANG_FILE_NAMES` constant and the `from_shebang` method in that file, respectively.
-Add any file extensions associated to your language to the `LANG_EXTENSIONS` constant.
+by adapting the `language_globs`, `from_emacs_mode_header` and `from_shebang` functions
+in that file.
 [GitHub's linguist definitions](https://github.com/github/linguist/blob/master/lib/linguist/languages.yml)
 are a useful source of common file extensions.
 
@@ -125,11 +125,11 @@ Finally, add a regression test for your language. This ensures that
 the output for your test file doesn't change unexpectedly.
 
 Regression test files live in `sample_files/` and have the form
-`foo_before.abc` and `foo_after.abc`.
+`foo_1.abc` and `foo_2.abc`.
 
 ```
-$ nano simple_before.json
-$ nano simple_after.json
+$ nano simple_1.json
+$ nano simple_2.json
 ```
 
 Run the regression test script and update the `.expected` file.
@@ -137,4 +137,12 @@ Run the regression test script and update the `.expected` file.
 ```
 $ ./sample_files/compare_all.sh
 $ cp sample_files/compare.result sample_files/compare.expected
+```
+
+## Maintenance
+
+To update a parser that is already imported, use `git subtree pull`.
+
+```
+$ git subtree pull --prefix=vendored_parsers/tree-sitter-json git@github.com:tree-sitter/tree-sitter-json.git master
 ```

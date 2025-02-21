@@ -1,7 +1,7 @@
 <p align="center">
   <a href="#readme"><img src="img/logo.png" alt="it's difftastic!"/></a>
   <br>
-  <a href="http://difftastic.wilfred.me.uk/"><img src="https://img.shields.io/badge/manual-en-brightgreen?style=flat-square" alt="English manual"></a>
+  <a href="https://difftastic.wilfred.me.uk/introduction.html"><img src="https://img.shields.io/badge/manual-en-brightgreen?style=flat-square" alt="English manual"></a>
   <a href="https://difftastic.wilfred.me.uk/zh-CN/"><img src="https://img.shields.io/badge/manual-zh--CN-brightgreen?style=flat-square" alt="Chinese manual"></a>
   <a href="https://crates.io/crates/difftastic"><img src="https://img.shields.io/crates/v/difftastic.svg?style=flat-square" alt="crates.io"></a>
   <a href="https://codecov.io/gh/Wilfred/difftastic"><img src="https://img.shields.io/codecov/c/github/Wilfred/difftastic?style=flat-square&token=dZzAZtQT2S" alt="codecov.io"></a>
@@ -41,7 +41,7 @@ standalone files and git.
 ## Languages
 
 Difftastic supports over 30 programming languages, see [the
-manual](https://difftastic.wilfred.me.uk/) for the full list.
+manual](https://difftastic.wilfred.me.uk/languages_supported.html) for the full list.
 
 If a file has an unrecognised extension, difftastic uses a
 textual diff with word highlighting.
@@ -113,9 +113,28 @@ $ difft file_with_conflicts.js
 
 No. AST merging is a hard problem that difftastic does not address.
 
-AST diffing is a also lossy process from the perspective of a text
+AST diffing is a lossy process from the perspective of a text
 diff. Difftastic will ignore whitespace that isn't syntactically
 significant, but merging requires tracking whitespace.
+
+The [mergiraf](https://mergiraf.org/) tool does offer merges based on
+a tree-sitter AST however.
+
+### Can difftastic ignore reordering?
+
+No. Difftastic always considers order to be important, so diffing
+e.g. `set(1, 2)` and `set(2, 1)` will show changes.
+
+If you're diffing JSON, consider sorting the keys before passing them
+to difftastic.
+
+```
+$ difft <(jq --sort-keys < file_1.json) <(jq --sort-keys < file_2.json)
+```
+
+See also [Tricky Cases: Unordered Data
+Types](https://difftastic.wilfred.me.uk/tricky_cases.html#unordered-data-types)
+in the manual.
 
 ### Can I use difftastic to check for syntactic changes without diffing?
 
@@ -131,6 +150,25 @@ $ difft --check-only --exit-code before.js after.js
 
 This will set the exit code to 0 if there are no syntactic changes, or
 1 if there are changes found.
+
+### Why aren't colours appearing in my terminal?
+
+Difftastic uses ANSI bright colours by default, but some terminal
+themes show bright colours as grey. Solarized is a popular theme that
+does this.
+
+If you're a Solarized user, use `export DFT_BACKGROUND=light` to
+disable bright colours, or try a different terminal colour scheme.
+
+### How does it work?
+
+Difftastic treats structural diffing as a graph problem, and uses
+Dijkstra's algorithm.
+
+My [blog
+post](https://www.wilfred.me.uk/blog/2022/09/06/difftastic-the-fantastic-diff/)
+describes the design, and there is also an [internals section in the
+manual](https://difftastic.wilfred.me.uk/diffing.html).
 
 ## Translation
 
